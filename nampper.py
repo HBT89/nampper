@@ -2,38 +2,88 @@ import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from collections import defaultdict
+version_this = "1.1.03"
+
+# Function to extract vulners
+
+# Function to extract vulners data
+def extract_vulners_data(nmap_output):
+    vulners_data = defaultdict(lambda: {"version": "", "link": "", "exploitable": False, "ips": set()})
+    lines = nmap_output.split("\n")
+    
+    current_ip = None
+    capturing = False
+
+    for line in lines:
+        line = line.rstrip()
+
+        ip_match = re.match(r"Nmap scan report for (\d+\.\d+\.\d+\.\d+)", line)
+        if ip_match:
+            current_ip = ip_match.group(1)
+            capturing = False
+
+        elif current_ip and line.startswith("| vulners:"):
+            capturing = True
+
+        elif capturing:
+            if line.startswith("|_"):
+                capturing = False
+                continue
+
+            vuln_match = re.match(r"^\|\s{5}\t([^\t]+)\t([\d\.]+)\t(https://[^\t]+)(?:\t(\*EXPLOIT\*))?", line)
+            if vuln_match:
+                vuln_id, score, link, exploitable = vuln_match.groups()
+                exploitable = exploitable is not None
+                
+                if vuln_id not in vulners_data:
+                    vulners_data[vuln_id]["version"] = score
+                    vulners_data[vuln_id]["link"] = link
+                    vulners_data[vuln_id]["exploitable"] = exploitable
+                
+                vulners_data[vuln_id]["ips"].add(current_ip)
+
+    return vulners_data
 
 # Function to parse Nmap console output
 def parse_nmap_output(nmap_output):
     results = []
     port_table = defaultdict(set)
+    vulners_data = extract_vulners_data(nmap_output)
     host_blocks = re.split(r"Nmap scan report for ", nmap_output)[1:]
 
     for block in host_blocks:
-        # Extract hostname and IP address
         match = re.match(r"(\S+)\s+\((\d+\.\d+\.\d+\.\d+)\)", block)
         hostname, ip_addr = (match.group(1), match.group(2)) if match else ("unknown", "unknown")
+        os_match = re.search(r"OS details: (.+?)\n", block)
+        os_info = os_match.group(1) if os_match else "Unknown OS"
         ports = []
-        # Extract port information
+        
         port_matches = re.findall(r"(\d+)/tcp\s+(\w+)\s+([\w/-]+)", block)
         for port_info in port_matches:
             port_id, state, service = port_info
             ports.append(f"Port {port_id}/tcp ({service.strip()}): {state}")
             port_table[(port_id, service.strip())].add(ip_addr)
-        results.append((f"{hostname} ({ip_addr})", ports))
+        
+        results.append((f"{hostname} ({ip_addr}) - {os_info}", ports))
     
-    # Convert port_table to table data format
     table_data = [(port_id, service, ", ".join(sorted(ips))) for (port_id, service), ips in port_table.items()]
-    return results, table_data
+    return results, table_data, vulners_data
 
-# Function to parse NetBIOS scan output
-def parse_netbios_output(netbios_output):
-    netbios_data = {}
-    matches = re.findall(r"\[\+\] (\d+\.\d+\.\d+\.\d+) \[(.*?)\] OS:(.*?) Names:\((.*?)\) Addresses:\((.*?)\) Mac:(.*?)", netbios_output)
-    for match in matches:
-        ip, netbios_name, os, names, addresses, mac = match
-        netbios_data[ip] = {"NetBIOS Name": netbios_name, "OS": os.strip(), "Names": names.split(", ") if names else [], "MAC": mac.strip(), "Addresses": addresses.split(", ") if addresses else []}
-    return netbios_data
+# Function to populate the UI with parsed data
+def populate_ui(parsed_data, port_table_data, vulners_data):
+    clear_all_views()
+    
+    for host, ports in parsed_data:
+        parent_id = tree.insert("", "end", text=host, values=(""))
+        for port in ports:
+            tree.insert(parent_id, "end", text=port)
+    
+    for port_id, service, ip_list in port_table_data:
+        table.insert("", "end", values=(port_id, service, ip_list))
+    
+    for vuln_id, data in vulners_data.items():
+        exploitable_icon = "✅" if data["exploitable"] else ""
+        vuln_tree.insert("", "end", values=(vuln_id, data["version"], data["link"], ", ".join(data["ips"]), exploitable_icon))
 
 # Function to hide unknown entries
 def hide_unknown():
@@ -52,7 +102,7 @@ def clear_all_views():
 
 # Function to sort table columns
 def sort_table(column, reverse):
-    data = [(table.set(child, column), child) for child in table.get_children("")]
+    data = [(table.item(child, "values")[column_index], child) for child in table.get_children("")]
     data.sort(reverse=reverse)
     for index, (val, child) in enumerate(data):
         table.move(child, "", index)
@@ -79,8 +129,8 @@ def load_file():
         return
     with open(file_path, 'r') as file:
         content = file.read()
-    parsed_data, port_table_data = parse_nmap_output(content)
-    populate_ui(parsed_data, port_table_data)
+    parsed_data, port_table_data, vulners_data = parse_nmap_output(content)
+    populate_ui(parsed_data, port_table_data, vulners_data)
 
 # Function to load and parse user-pasted output
 def paste_output():
@@ -92,8 +142,8 @@ def paste_output():
         if "[+]" in content:
             parsed_data = parse_netbios_output(content)
         else:
-            parsed_data, port_table_data = parse_nmap_output(content)
-            populate_ui(parsed_data, port_table_data)
+            parsed_data, port_table_data, vulners_data = parse_nmap_output(content)
+            populate_ui(parsed_data, port_table_data, vulners_data)
             text_box.delete("1.0", tk.END)
             return
         messagebox.showinfo("Success", "NetBIOS data parsed successfully!")
@@ -102,29 +152,23 @@ def paste_output():
         text_box.delete("1.0", tk.END)
         text_box.insert("1.0", f"Error: {str(e)}")
 
-# Function to populate the UI with parsed data
-def populate_ui(parsed_data, port_table_data):
-    clear_all_views()
-    for host, ports in parsed_data:
-        parent_id = tree.insert("", "end", text=host, values=(""))
-        for port in ports:
-            tree.insert(parent_id, "end", text=port)
-    for port_id, service, ip_list in port_table_data:
-        table.insert("", "end", values=(port_id, service, ip_list))
+
 
 # UI Setup
 app = tk.Tk()
-app.title("Nmap & NetBIOS Output Viewer")
+app.title(f"Nmap & NetBIOS Output Viewer version {version_this}")
 app.geometry("900x600")
 
 # Create tabbed interface
 tab_control = ttk.Notebook(app)
 tree_tab = ttk.Frame(tab_control)
 table_tab = ttk.Frame(tab_control)
+vuln_tab = ttk.Frame(tab_control)
 paste_tab = ttk.Frame(tab_control)
 
 tab_control.add(tree_tab, text="Tree View")
 tab_control.add(table_tab, text="Service Map")
+tab_control.add(vuln_tab, text="Vulnerabilities")
 tab_control.add(paste_tab, text="Paste Output")
 tab_control.pack(expand=1, fill="both")
 
@@ -139,6 +183,14 @@ table = ttk.Treeview(table_tab, columns=("Port", "Service", "IP Address"), show=
 for col in ("Port", "Service", "IP Address"):
     table.heading(col, text=col, command=lambda c=col: sort_table(c, False))
 table.pack(fill="both", expand=True)
+
+# Vulnerabilities Tab
+vuln_frame = ttk.Frame(vuln_tab)
+vuln_frame.pack(fill="both", expand=True)
+vuln_tree = ttk.Treeview(vuln_tab, columns=("ID", "Score", "Link", "Exploitable"), show="headings")
+for col in ("ID", "Score", "Link", "Exploitable"):
+    vuln_tree.heading(col, text=col)
+vuln_tree.pack(fill="both", expand=True)
 
 # Paste Input Tab
 text_box = tk.Text(paste_tab, height=15)
@@ -163,3 +215,4 @@ export_button = ttk.Button(button_frame, text="Export Target File", command=expo
 export_button.grid(row=1, column=1, padx=5, pady=5)
 
 app.mainloop()
+
