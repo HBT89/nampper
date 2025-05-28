@@ -4,13 +4,10 @@ from tkinter import ttk, filedialog, messagebox
 from collections import defaultdict
 version_this = "1.1.03"
 
-# Function to extract vulners
-
 # Function to extract vulners data
 def extract_vulners_data(nmap_output):
     vulners_data = defaultdict(lambda: {"version": "", "link": "", "exploitable": False, "ips": set()})
     lines = nmap_output.split("\n")
-    
     current_ip = None
     capturing = False
 
@@ -30,16 +27,16 @@ def extract_vulners_data(nmap_output):
                 capturing = False
                 continue
 
-            vuln_match = re.match(r"^\|\s{5}\t([^\t]+)\t([\d\.]+)\t(https://[^\t]+)(?:\t(\*EXPLOIT\*))?", line)
+            vuln_match = re.match(r"^\| {5}\t([^\t]+)\t([\d\.]+)\t(https://[^\t]+)(?:\t(\*EXPLOIT\*))?", line)
             if vuln_match:
                 vuln_id, score, link, exploitable = vuln_match.groups()
                 exploitable = exploitable is not None
-                
+
                 if vuln_id not in vulners_data:
                     vulners_data[vuln_id]["version"] = score
                     vulners_data[vuln_id]["link"] = link
                     vulners_data[vuln_id]["exploitable"] = exploitable
-                
+
                 vulners_data[vuln_id]["ips"].add(current_ip)
 
     return vulners_data
@@ -52,38 +49,39 @@ def parse_nmap_output(nmap_output):
     host_blocks = re.split(r"Nmap scan report for ", nmap_output)[1:]
 
     for block in host_blocks:
-        match = re.match(r"(\S+)\s+\((\d+\.\d+\.\d+\.\d+)\)", block)
-        hostname, ip_addr = (match.group(1), match.group(2)) if match else ("unknown", "unknown")
+        ip_line_match = re.match(r"(\d+\.\d+\.\d+\.\d+)", block)
+        ip_addr = ip_line_match.group(1) if ip_line_match else "unknown"
+        hostname = "unknown"
         os_match = re.search(r"OS details: (.+?)\n", block)
         os_info = os_match.group(1) if os_match else "Unknown OS"
         ports = []
-        
+
         port_matches = re.findall(r"(\d+)/tcp\s+(\w+)\s+([\w/-]+)", block)
         for port_info in port_matches:
             port_id, state, service = port_info
             ports.append(f"Port {port_id}/tcp ({service.strip()}): {state}")
             port_table[(port_id, service.strip())].add(ip_addr)
-        
+
         results.append((f"{hostname} ({ip_addr}) - {os_info}", ports))
-    
+
     table_data = [(port_id, service, ", ".join(sorted(ips))) for (port_id, service), ips in port_table.items()]
     return results, table_data, vulners_data
 
 # Function to populate the UI with parsed data
 def populate_ui(parsed_data, port_table_data, vulners_data):
     clear_all_views()
-    
+
     for host, ports in parsed_data:
         parent_id = tree.insert("", "end", text=host, values=(""))
         for port in ports:
             tree.insert(parent_id, "end", text=port)
-    
+
     for port_id, service, ip_list in port_table_data:
         table.insert("", "end", values=(port_id, service, ip_list))
-    
+
     for vuln_id, data in vulners_data.items():
         exploitable_icon = "✅" if data["exploitable"] else ""
-        vuln_tree.insert("", "end", values=(vuln_id, data["version"], data["link"], ", ".join(data["ips"]), exploitable_icon))
+        vuln_tree.insert("", "end", values=(vuln_id, data["version"], data["link"], exploitable_icon))
 
 # Function to hide unknown entries
 def hide_unknown():
@@ -98,10 +96,13 @@ def clear_all_views():
         tree.delete(item)
     for row in table.get_children():
         table.delete(row)
+    for row in vuln_tree.get_children():
+        vuln_tree.delete(row)
     text_box.delete("1.0", tk.END)
 
 # Function to sort table columns
 def sort_table(column, reverse):
+    column_index = {"Port": 0, "Service": 1, "IP Address": 2}[column]
     data = [(table.item(child, "values")[column_index], child) for child in table.get_children("")]
     data.sort(reverse=reverse)
     for index, (val, child) in enumerate(data):
@@ -151,8 +152,6 @@ def paste_output():
     except Exception as e:
         text_box.delete("1.0", tk.END)
         text_box.insert("1.0", f"Error: {str(e)}")
-
-
 
 # UI Setup
 app = tk.Tk()
@@ -215,4 +214,3 @@ export_button = ttk.Button(button_frame, text="Export Target File", command=expo
 export_button.grid(row=1, column=1, padx=5, pady=5)
 
 app.mainloop()
-
