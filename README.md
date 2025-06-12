@@ -9,6 +9,12 @@ nampper is a simple Python GUI tool for quickly viewing and extracting informati
 - **Vulnerability display**: Shows detected vulnerabilities and exploitability (if present in the scan output).
 - **Export targets**: Select a service row and export the associated IPs to a file of your choice.
 - **Hide unknowns**: Option to hide rows with unknown hosts or IPs for cleaner views.
+## How to Run
+1. Open the file in a command window with 
+```
+python nampper.py
+```
+**NOTE** You might need to specify python3 if you're in a mixed environment
 
 ## How to Use
 1. **Paste Output**: Copy Nmap or NetBIOS output and paste it into the 'Paste Output' tab, then click 'Parse Input'.
